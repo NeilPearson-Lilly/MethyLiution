@@ -1,0 +1,16 @@
+Package: MethyLiution
+Type: Package
+Title: MethyLiution: A QC Pipeline For Methylation Data
+Version: 0.1.0
+Author: Chunlao Tang, Yupeng Li, Karim Malki, David Collier, Brian Eastwood, Yushi Liu, Neil Pearson
+Maintainer: Neil Pearson <pearson_neil@network.lilly.com>
+Description: Carry out a number of quality control operations on methylation data from 450K or EPIC microarray experiments. Compute a consistent set of quality metrics. Account for and correct some common mistakes.
+License: Apache V2.0
+Encoding: UTF-8
+LazyData: false
+RoxygenNote: 6.1.1
+Depends: R (>= 3.5), wateRmelon
+Imports: AnnotationDbi, Biobase, BiocGenerics, GenomeInfoDb, GenomicFeatures, IlluminaHumanMethylationEPICanno.ilm10b2.hg19, IlluminaHumanMethylationEPICmanifest, RColorBrewer, doParallel, foreach, ggplot2, grDevices, graphics, heatmap3, logging, lumi, methylumi, minfi, parallel, stats, sva, utils, zeallot
+biocViews: QualityControl, Microarray, Preprocessing, DNAMethylation, TwoChannel
+Suggests: knitr
+VignetteBuilder: knitr

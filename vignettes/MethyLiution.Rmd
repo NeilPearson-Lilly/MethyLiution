@@ -1,0 +1,263 @@
+---
+title: "MethyLiution"
+author: "Chunlao Tang, Yupeng Li, Karim Malki, David A Collier, Brian Eastwood, Neil Pearson and Yushi Liu"
+date: "1 February 2019"
+output: html_document
+vignette: >
+  %\VignetteIndexEntry{MethyLiution}
+  %\VignetteEngine{knitr::rmarkdown}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## MethyLiution
+
+In order to facilitate meaningful comparisons across the quickly growing number of microarray-based methylation experiments, we have developed an ordered set of procedures which we deploy as a pipeline for the rapid, consistent and user-friendly evaluation of data quality for common formats of these experiments. This pipeline also supports the capability to detect and implement corrective adjustments for notable common inconsistencies arising from experimental and human error.
+
+## Required data
+
+Data should be prepared for analysis by simply moving all related .IDAT files into a single directory.
+
+In addition, a sample sheet/metadata file should be supplied. This must contain at least 4 columns, in the folowing order:
+
+1. Assay ID (derived from standard IDAT filename, minus colour channel label)
+2. Sample ID (an arbitrary ID assigned by the experimenter)
+3. Experimental group
+4. Sex (either F, M, or U if unknown/unavailable)
+
+For example, the GEO series [GSE86831](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE86831) must use this metadata:
+
+```{r metatable, echo = FALSE}
+metatable = read.csv("GSE86831_meta.csv")
+knitr::kable(metatable)
+```
+
+While other information may be included in a metadata file, the first 4 columns must contain the information specified above, in that order. 
+
+## Typical operation
+
+In most cases, we recommend to simply run the entire analysis procedure in one pass, like so:
+
+```{r typical, eval=FALSE}
+input_dir = "C:/path/to/IDAT_files"
+sample_sheet = paste(input_dir, "meta.csv", sep = "/")
+output_dir = "C:/path/for/output_files"
+runPipeline(datadir = input_dir, 
+            array = "450K",
+            metafile = sample_sheet, 
+            outdir = output_dir)
+```
+
+By default, we do not run step 10 (surrogate variable analysis) unless explicitly requested, on the grounds that this step is likely to require a more flexible and context-specific analysis than can be easily written into a pipeline function. 
+
+However, here we will demonstrate the application of one step at a time. Using the pipeline in this way enables the insertion of additional analytical steps according to user requirements.
+
+Note that when run in this manner, each subsequent step after the first requires the files produced during preceding steps to be present in the output directory in order to successfully run.
+
+### Step 1: Data parsing
+
+Initially, IDAT files in the indicated directory are parsed with the ReadEPIC() function from the "wateRmelon" package. The resulting objects are compatible with the widely-used "methylumi" package. Metadata concerning experimental design is also read and integrated.
+
+If requested by the user (with the `threads` argument), and suitable system architecture is available, data parsing can be executed in parallel for increased speed. 
+
+The array design (either "EPIC" or "450K") must be supplied at this stage to ensure that files are parsed correctly.
+
+Once parsed, datasets are saved directly from memory to the output directory specified by the user. This enables subsequent analysis steps to be repeated or adjusted at any time. 
+
+```{r step01, eval=FALSE}
+runPipeline(datadir = input_dir, 
+            metafile = sample_sheet, 
+            outdir = output_dir, 
+            threads = 16,
+            array = "EPIC",
+            begin = 1, end = 1)
+```
+
+### Step 2: Confounding SNP filtering
+
+Single probes are filtered from the dataset if associated with sex chromosomes, SNPs >=10bp of the hybridisation site (based on dbSNP build 140), or imprinting genes (probes with any of these features may produce misleading results arising more from the polymorphism than the methylation) in the appropriate array type. The list of valid probes is pre-computed and is accessible 
+
+The array design (either "EPIC" or "450K") must be supplied at this stage to ensure that appropriate filters are applied. If using EPIC arrays, annotations are added using the "IlluminaHumanMethylationEPICanno.ilm10b2.hg19" package.
+
+```{r step02, eval=FALSE}
+runPipeline(datadir = input_dir, 
+            metafile = sample_sheet, 
+            outdir = output_dir, 
+            array = "EPIC",
+            begin = 2, end = 2)
+```
+
+A QC plot of control probes is produced from the filtered dataset.
+
+```{r, out.width="0.3\\linewidth", include=TRUE, fig.align="center", fig.cap=c("your caption"), echo=FALSE}
+knitr::include_graphics("./QC02_plot_control_probes.pdf")
+```
+
+### Step 3: Metadata matching
+
+Sex data of samples is compared against sex inferred from hierarchical clustering on sex chromosome probes. If requested using the `gender_stringent` argument, assays where incosistency is detected between recorded and inferred sex are removed. When samples of only one sex are present, or sex of all samples is recorded as unknown (as in the GSE86831 dataset), this step is automatically skipped.
+
+```{r step03, eval=FALSE}
+runPipeline(datadir = input_dir, 
+            metafile = sample_sheet, 
+            outdir = output_dir,
+            begin = 3, end = 3)
+```
+
+Plots are available to compare inferences to recorded values in the forms of hierarchical clustering, heatmap, and multidimensional scaling (MDS) outputs. 
+
+A CSV file containing the indicated sex-based clusters and recommendations for removal are also produced, if any are found. 
+
+### Step 4: Duplicate sample removal
+
+Where data from multiple assays are present per sample, the assay with the highest proportion of statistically significant (default p <= 0.05 - changed using the `max_pval` argument) detections, quantified by the least mean p-value, is used exclusively for subsequent analyses. 
+
+Following this, samples with assays in which the proportion of non-significant p-values are greater than the previously-set p-value cutoff are removed. Additionally, probes that cannot be detected in more than a user-specified proportion (default 0.5 - changed with the `max_prop` argument) of samples at the specified p-value are removed.
+
+```{r step04, eval=FALSE}
+runPipeline(datadir = input_dir, 
+            metafile = sample_sheet, 
+            outdir = output_dir, 
+            begin = 4, end = 4)
+```
+
+A frequency table counting failed detections for probes across all assays, and a table indicating which samples have multiple assays assigned, are also output in CSV format. Failed detection frequency for assays in the GSE86831 dataset are shown:
+
+```{r freqtable, echo = FALSE}
+freqtable = read.csv("QC04_Detection_Failure_Table_By_Probe.csv")
+knitr::kable(freqtable)
+```
+
+### Step 5: Outlier assay detection
+
+Hierarchical clustering is applied at the sample level, allowing outlying samples to be visually identified. 
+
+```{r step05, eval=FALSE}
+runPipeline(datadir = input_dir, 
+            metafile = sample_sheet, 
+            outdir = output_dir, 
+            begin = 5, end = 5)
+```
+
+A dendrogram displays the results of this clustering, and results are also written to a CSV file along with an assessment of whether a sample likely justifies exclusion. In the GSE86831 dataset, two samples are flagged as outliers by this analysis; removal of these samples remains a judgment call by the experimenter. 
+
+```{r, out.width="0.3\\linewidth", include=TRUE, fig.align="center", fig.cap=c("your caption"), echo=FALSE}
+knitr::include_graphics("./QC05_outliers.pdf")
+```
+
+At this stage, plots are also produced to assess colour bias (between dyes) using exclusively methylated probes, exclusively unmethylated probes, both, and the sum of all probes. (Only colour bias amongst methylated probes is shown here).
+
+```{r, out.width="0.3\\linewidth", include=TRUE, fig.align="center", fig.cap=c("your caption"), echo=FALSE}
+knitr::include_graphics("./QC05_methy_colorBias.pdf")
+```
+
+Densities of M-values (the log2-ratio of intensity of methylated vs. unmethylated probes) are also plotted.
+
+```{r, out.width="0.3\\linewidth", include=TRUE, fig.align="center", fig.cap=c("your caption"), echo=FALSE}
+knitr::include_graphics("./QC05_density.pdf")
+```
+
+### Step 6: Colour balancing for 2-colour microarrays
+
+Normalisation is applied across the two colour channels of 2-colour assays, removing any bias arising from dye differences. 
+
+```{r step06, eval=FALSE}
+runPipeline(datadir = input_dir, 
+            metafile = sample_sheet, 
+            outdir = output_dir, 
+            begin = 6, end = 6)
+```
+
+Post-normalisation plots corresponding to those produced in the previous step are created at this point. The most important of these is the color bias plot, which should now show that systemic differences between colors have been adjusted out:
+
+```{r, out.width="0.3\\linewidth", include=TRUE, fig.align="center", fig.cap=c("your caption"), echo=FALSE}
+knitr::include_graphics("./QC06_afterColorAdj_sum_colorBias.pdf")
+```
+
+However, it is also worth checking other outputs in order to ensure that no further unwanted biases have been introduced.
+
+### Step 7: Inter-assay normalisation
+
+One of several normalisation methods is applied at the inter-assay level. Options are 'quantile', 'ssn' (simple scaling normalisation), or 'none', and are specified using the `normalisation_method` argument. 
+
+Quantile normalisation is a popular method for global normalization to reduce technical variation, but relies on the assumption that distribution of measures is constant across samples. This assumption is unlikely to be true in cancer samples with severe genomic aberrations, where SSN is recommended. The only assumption of the more conservative SSN method is that each sample has the same background levels and the same scale. Therefore, the choice of normalisation method will depend on which assumption is more biologically plausible.
+
+```{r step07, eval=FALSE}
+runPipeline(datadir = input_dir, 
+            metafile = sample_sheet, 
+            outdir = output_dir, 
+            begin = 7, end = 7)
+```
+
+Corresponding plots to those produced in the previous two steps are again produced following this normalisation. 
+
+```{r, out.width="0.3\\linewidth", include=TRUE, fig.align="center", fig.cap=c("your caption"), echo=FALSE}
+knitr::include_graphics("./QC07_afterNorm_density.pdf")
+```
+
+### Step 8: Between probe-type normalisation
+
+Normalisation between type I and type II probes is applied using BMIQ methods from the "wateRmelon" package.
+
+This step may be executed in parallel for increased speed. 
+
+```{r step08, eval=FALSE}
+runPipeline(datadir = input_dir, 
+            metafile = sample_sheet, 
+            outdir = output_dir, 
+            threads = 16,
+            begin = 8, end = 8)
+```
+
+This step produces 3 plots per sample:
+
+```{r, out.width="0.3\\linewidth", include=TRUE, fig.align="center", fig.cap=c("your caption"), echo=FALSE}
+knitr::include_graphics("./CheckBMIQ-GSM2309184_200134080019_R08C01.pdf")
+```
+
+### Step 9: Remove assays with missing metadata
+
+Assays with missing or incomplete metadata are removed.
+
+```{r step09, eval=FALSE}
+runPipeline(datadir = input_dir, 
+            metafile = sample_sheet, 
+            outdir = output_dir, 
+            begin = 9, end = 9)
+```
+
+### Step 10: Apply surrogate variable analysis to automatically find hidden variables
+
+Surrogate variables within the data - i.e., those with variance not accounted for by the "Group" variable in the input metadata file - are mapped using the "sva" package, allowing detection and correction of unlabeled batch effects. 
+
+We recommend that this analysis is performed manually by a competent statistician, so by default the pipeline will not run this final step automatically. 
+
+```{r step10, eval=FALSE}
+runPipeline(datadir = input_dir, 
+            metafile = sample_sheet, 
+            outdir = output_dir, 
+            begin = 10, end = 10)
+```
+
+The analysis reports 4 unlabeled effects in the GSE86831 dataset, and provides figures allowing them to be analysed and regressed out if deemed appropriate by the experimenter.
+
+```{r svatable, echo = FALSE}
+svatable = read.csv("QC04_Detection_Failure_Table_By_Probe.csv")
+knitr::kable(svatable)
+```
+
+### Citing MethyLiution
+
+If you find this package useful, please cite it!
+
+```{r cite}
+MethyLiution::cite_me()
+```
+
+### References
+
+
+
+
